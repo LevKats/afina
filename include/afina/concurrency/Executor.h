@@ -28,7 +28,7 @@ class Executor {
         kStopped
     };
 
-    Executor(std::string name, int size);
+    Executor(uint32_t low_watermark, uint32_t hight_watermark, uint32_t max_queue_size, uint32_t idle_time);
     ~Executor();
 
     /**
@@ -38,6 +38,11 @@ class Executor {
      * In case if await flag is true, call won't return until all background jobs are done and all threads are stopped
      */
     void Stop(bool await = false);
+
+    /**
+     * Signal thread pool to start. It will start low_watermark of new threads and change state to kRun
+     */
+    void Start();
 
     /**
      * Add function to be executed on the threadpool. Method returns true in case if task has been placed
@@ -50,12 +55,15 @@ class Executor {
         // Prepare "task"
         auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
 
-        std::unique_lock<std::mutex> lock(this->mutex);
+        std::unique_lock<std::mutex> lock(_queue_modify);
         if (state != State::kRun) {
             return false;
         }
 
         // Enqueue new task
+        if (tasks.size() > max_queue_size) {
+            return false;
+        }
         tasks.push_back(exec);
         empty_condition.notify_one();
         return true;
@@ -63,25 +71,36 @@ class Executor {
 
 private:
     // No copy/move/assign allowed
-    Executor(const Executor &);            // = delete;
-    Executor(Executor &&);                 // = delete;
-    Executor &operator=(const Executor &); // = delete;
-    Executor &operator=(Executor &&);      // = delete;
+    Executor(const Executor &) = delete;
+    Executor(Executor &&) = delete;
+    Executor &operator=(const Executor &) = delete;
+    Executor &operator=(Executor &&) = delete;
 
     /**
-     * Main function that all pool threads are running. It polls internal task queue and execute tasks
+     * Method that all pool threads are running. It polls internal task queue and execute tasks
      */
-    friend void perform(Executor *executor);
+    void perform();
 
     /**
-     * Mutex to protect state below from concurrent modification
+     * Mutex to protect state and tasks below from concurrent modification
      */
-    std::mutex mutex;
+    std::mutex _queue_modify;
 
     /**
      * Conditional variable to await new data in case of empty queue
      */
     std::condition_variable empty_condition;
+
+    uint32_t _current_workers;
+    uint32_t low_watermark;
+    uint32_t hight_watermark;
+    uint32_t max_queue_size;
+    uint32_t idle_time;
+
+    /**
+     * Conditional variable to inform thread with Stop function that all work has been done
+     */
+    std::condition_variable had_finished;
 
     /**
      * Vector of actual threads that perorm execution

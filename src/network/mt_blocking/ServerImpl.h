@@ -2,6 +2,8 @@
 #define AFINA_NETWORK_MT_BLOCKING_SERVER_H
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #include <afina/network/Server.h>
@@ -39,6 +41,9 @@ protected:
     void OnRun();
 
 private:
+    // Worker's logic
+    void Worker(int client_socket);
+
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
 
@@ -46,6 +51,18 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
+
+    //  Count of workers
+    uint32_t _current_workers;
+
+    // Max workers count
+    uint32_t _max_workers_count;
+
+    // Mutex to safely change _current_workers and condition_variable
+    std::mutex _count_changes;
+
+    // condition_variable to notify all threads in Join()
+    std::condition_variable all_done;
 
     // Server socket to accept connections on
     int _server_socket;

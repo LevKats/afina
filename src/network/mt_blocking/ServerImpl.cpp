@@ -193,7 +193,7 @@ void ServerImpl::Worker(int client_socket) {
     {
         std::unique_lock<std::mutex> lock(_count_changes);
         --_current_workers;
-        if (!_current_workers && !running) {
+        if (!_current_workers && !running.load()) {
             all_done.notify_all();
         }
     }

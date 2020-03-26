@@ -16,49 +16,50 @@ namespace Backend {
  *
  *
  */
-class ThreadSafeSimplLRU : public SimpleLRU {
+class ThreadSafeSimplLRU : public Storage {
 public:
-    ThreadSafeSimplLRU(size_t max_size = 1024) : SimpleLRU(max_size) {}
+    ThreadSafeSimplLRU(size_t max_size = 1024) : _st_storage(max_size) {}
     ~ThreadSafeSimplLRU() {}
 
     // see SimpleLRU.h
     bool Put(const std::string &key, const std::string &value) override {
         // TODO: sinchronization
-        std::unique_lock<std::mutex> lock(m);
-        return SimpleLRU::Put(key, value);
+        std::unique_lock<std::mutex> lock(in_use);
+        return _st_storage.Put(key, value);
     }
 
     // see SimpleLRU.h
     bool PutIfAbsent(const std::string &key, const std::string &value) override {
         // TODO: sinchronization
-        std::unique_lock<std::mutex> lock(m);
-        return SimpleLRU::PutIfAbsent(key, value);
+        std::unique_lock<std::mutex> lock(in_use);
+        return _st_storage.PutIfAbsent(key, value);
     }
 
     // see SimpleLRU.h
     bool Set(const std::string &key, const std::string &value) override {
         // TODO: sinchronization
-        std::unique_lock<std::mutex> lock(m);
-        return SimpleLRU::Set(key, value);
+        std::unique_lock<std::mutex> lock(in_use);
+        return _st_storage.Set(key, value);
     }
 
     // see SimpleLRU.h
     bool Delete(const std::string &key) override {
         // TODO: sinchronization
-        std::unique_lock<std::mutex> lock(m);
-        return SimpleLRU::Delete(key);
+        std::unique_lock<std::mutex> lock(in_use);
+        return _st_storage.Delete(key);
     }
 
     // see SimpleLRU.h
     bool Get(const std::string &key, std::string &value) override {
         // TODO: sinchronization
-        std::unique_lock<std::mutex> lock(m);
-        return SimpleLRU::Get(key, value);
+        std::unique_lock<std::mutex> lock(in_use);
+        return _st_storage.Get(key, value);
     }
 
 private:
     // TODO: sinchronization primitives
-    std::mutex m;
+    std::mutex in_use;
+    SimpleLRU _st_storage;
 };
 
 } // namespace Backend

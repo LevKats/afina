@@ -73,8 +73,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    current_workers = 0;
-    max_workers_count = n_workers;
+    _current_workers = 0;
+    _max_workers_count = n_workers;
 
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
@@ -165,16 +165,21 @@ void ServerImpl::Worker(int client_socket) {
 
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
-                    _logger->debug("Start command execution");
+                    _logger->debug("Start command execution on client_socket {}", client_socket);
 
                     std::string result;
                     command_to_execute->Execute(*pStorage, argument_for_command, result);
+                    _logger->debug("finished execution on client_socket {}", client_socket);
 
                     // Send response
                     result += "\r\n";
                     if (send(client_socket, result.data(), result.size(), 0) <= 0) {
                         throw std::runtime_error("Failed to send response");
                     }
+
+                    command_to_execute.reset();
+                    argument_for_command.resize(0);
+                    parser.Reset();
                 }
             } // while (readed_bytes)
         }
@@ -182,6 +187,7 @@ void ServerImpl::Worker(int client_socket) {
         if (readed_bytes == 0) {
             _logger->debug("Connection closed");
         } else {
+            _logger->debug("Finish connection with readed_bytes {}", readed_bytes);
             throw std::runtime_error(std::string(strerror(errno)));
         }
     } catch (std::runtime_error &ex) {

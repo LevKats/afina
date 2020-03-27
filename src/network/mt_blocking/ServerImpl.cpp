@@ -73,8 +73,12 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    _current_workers = 0;
-    _max_workers_count = n_workers;
+    executor.reset();
+    // TODO make it configurable
+    auto new_ex = std::unique_ptr<Concurrency::Executor>(
+        new Concurrency::Executor(std::max(n_workers / 2, uint32_t(1)), n_workers, 100, 10000));
+    executor = std::move(new_ex);
+    executor->Start();
 
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
@@ -83,13 +87,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 void ServerImpl::Stop() {
     running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
-    {
-        std::unique_lock<std::mutex> lock(_count_changes);
-
-        while (running.load() || _current_workers) {
-            all_done.wait(lock);
-        }
-    }
+    executor->Stop(true);
 }
 
 // See Server.h
@@ -97,13 +95,7 @@ void ServerImpl::Join() {
     assert(_thread.joinable());
     _thread.join();
     close(_server_socket);
-    {
-        std::unique_lock<std::mutex> lock(_count_changes);
-
-        while (running.load() || _current_workers) {
-            all_done.wait(lock);
-        }
-    }
+    executor->Stop(true);
 }
 
 void ServerImpl::Worker(int client_socket) {
@@ -196,13 +188,6 @@ void ServerImpl::Worker(int client_socket) {
 
     // We are done with this connection
     close(client_socket);
-    {
-        std::unique_lock<std::mutex> lock(_count_changes);
-        --_current_workers;
-        if (!_current_workers && !running.load()) {
-            all_done.notify_all();
-        }
-    }
 }
 
 // See Server.h
@@ -243,22 +228,14 @@ void ServerImpl::OnRun() {
 
         // TODO: Start new thread and process data from/to connection
         {
-            std::unique_lock<std::mutex> lock(_count_changes);
-
-            if (_current_workers < _max_workers_count && running.load()) {
-                ++_current_workers;
-                std::thread worker(&ServerImpl::Worker, this, client_socket);
-                worker.detach();
-            } else {
+            if (!running.load() || !executor->Execute(&ServerImpl::Worker, this, client_socket))
                 close(client_socket);
-            }
         }
     }
-
     // Cleanup on exit...
     _logger->warn("Network stopped");
 }
-
 } // namespace MTblocking
+
 } // namespace Network
 } // namespace Afina

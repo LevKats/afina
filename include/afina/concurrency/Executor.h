@@ -3,6 +3,7 @@
 
 #include <condition_variable>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -16,6 +17,7 @@ namespace Concurrency {
  * # Thread pool
  */
 class Executor {
+public:
     enum class State {
         // Threadpool is fully operational, tasks could be added and get executed
         kRun,
@@ -27,9 +29,11 @@ class Executor {
         // Threadppol is stopped
         kStopped
     };
+    Executor(uint32_t low_watermark, uint32_t hight_watermark, uint32_t max_queue_size, uint32_t idle_time)
+        : low_watermark(low_watermark), hight_watermark(hight_watermark), max_queue_size(max_queue_size),
+          idle_time(idle_time) {}
 
-    Executor(uint32_t low_watermark, uint32_t hight_watermark, uint32_t max_queue_size, uint32_t idle_time);
-    ~Executor();
+    ~Executor() { Stop(true); }
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -37,12 +41,43 @@ class Executor {
      *
      * In case if await flag is true, call won't return until all background jobs are done and all threads are stopped
      */
-    void Stop(bool await = false);
+    void Stop(bool await = false) {
+        std::unique_lock<std::mutex> lock(_queue_modify);
+        if (state == State::kStopped) {
+            return;
+        }
+        state = State::kStopping;
+        if (tasks.empty()) {
+            empty_condition.notify_all();
+        }
+        if (await) {
+            while (state != State::kStopped) {
+                had_finished.wait(lock);
+            }
+        }
+    }
 
     /**
      * Signal thread pool to start. It will start low_watermark of new threads and change state to kRun
      */
-    void Start();
+    void Start() {
+        {
+            std::unique_lock<std::mutex> lock(_queue_modify);
+            if (state == State::kRun) {
+                return;
+            }
+            state = State::kRun;
+            _current_workers = 0;
+        }
+        //_logger->debug("Threadpool watermarks is {} {}", low_watermark, hight_watermark);
+        for (uint32_t i = 0; i != low_watermark; ++i) {
+            std::unique_lock<std::mutex> lock(_queue_modify);
+            std::thread th(&Executor::perform, this);
+            //_logger->debug("Creating thread {}/{}, id {}", i + 1, low_watermark, th.get_id());
+            th.detach();
+            ++_current_workers;
+        }
+    }
 
     /**
      * Add function to be executed on the threadpool. Method returns true in case if task has been placed
@@ -79,7 +114,62 @@ private:
     /**
      * Method that all pool threads are running. It polls internal task queue and execute tasks
      */
-    void perform();
+    void perform() {
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(_queue_modify);
+                if (!tasks.empty()) {
+                    task = tasks.front();
+                    tasks.pop_front();
+                    //_logger->debug("Thread id {} has got task", std::this_thread::get_id());
+                } else if (tasks.empty() && state == State::kStopping) {
+                    --_current_workers;
+                    empty_condition.notify_all();
+                    if (!_current_workers) {
+                        state = State::kStopped;
+                        had_finished.notify_all();
+                    }
+                    return;
+                } else {
+                    while (tasks.empty()) {
+                        if (empty_condition.wait_for(lock, std::chrono::milliseconds(idle_time)) ==
+                            std::cv_status::timeout) {
+                            if (_current_workers > low_watermark) {
+                                --_current_workers;
+                                //_logger->debug("Thread with id {} has been killed", std::this_thread::get_id());
+                                return;
+                            }
+                        }
+                        if (tasks.empty() && state == State::kStopping) {
+                            --_current_workers;
+                            if (!_current_workers) {
+                                state = State::kStopped;
+                                had_finished.notify_all();
+                            }
+                            //_logger->debug("Thread with id {} has been killed", std::this_thread::get_id());
+                            return;
+                        }
+                    }
+                    task = tasks.front();
+                    tasks.pop_front();
+                    //_logger->debug("Thread with id {} has got task after wait", std::this_thread::get_id());
+                }
+            }
+            {
+                std::unique_lock<std::mutex> lock(_queue_modify);
+                if (!tasks.empty() && state == State::kRun && _current_workers < hight_watermark) {
+                    ++_current_workers;
+                    std::thread th(&Executor::perform, this);
+                    //_logger->debug("Creating thread with id {}", th.get_id());
+                    th.detach();
+                }
+            }
+            // std::cout << "task execution" << std::endl;
+            //_logger->debug("Thread id {} is processing task", std::this_thread::get_id());
+            task();
+        }
+    }
 
     /**
      * Mutex to protect state and tasks below from concurrent modification
@@ -116,6 +206,8 @@ private:
      * Flag to stop bg threads
      */
     State state;
+
+    // std::shared_ptr<Logging::Service> _logger;
 };
 
 } // namespace Concurrency

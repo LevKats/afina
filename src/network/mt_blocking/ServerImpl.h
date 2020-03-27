@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 
+#include <afina/concurrency/Executor.h>
 #include <afina/network/Server.h>
 
 namespace spdlog {
@@ -52,17 +53,8 @@ private:
     // bounds
     std::atomic<bool> running;
 
-    //  Count of workers
-    uint32_t _current_workers;
-
-    // Max workers count
-    uint32_t _max_workers_count;
-
-    // Mutex to safely change _current_workers and condition_variable
-    std::mutex _count_changes;
-
-    // condition_variable to notify all threads in Join()
-    std::condition_variable all_done;
+    // Just thread pool
+    std::unique_ptr<Concurrency::Executor> executor;
 
     // Server socket to accept connections on
     int _server_socket;

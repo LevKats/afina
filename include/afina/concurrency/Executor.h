@@ -1,6 +1,7 @@
 #ifndef AFINA_CONCURRENCY_EXECUTOR_H
 #define AFINA_CONCURRENCY_EXECUTOR_H
 
+#include <cassert>
 #include <condition_variable>
 #include <functional>
 #include <iostream>
@@ -33,7 +34,10 @@ public:
         : low_watermark(low_watermark), hight_watermark(hight_watermark), max_queue_size(max_queue_size),
           idle_time(idle_time) {}
 
-    ~Executor() { Stop(true); }
+    ~Executor() {
+        assert(low_watermark < hight_watermark && low_watermark > 0);
+        Stop(true);
+    }
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -133,22 +137,25 @@ private:
                     return;
                 } else {
                     while (tasks.empty()) {
-                        if (empty_condition.wait_for(lock, std::chrono::milliseconds(idle_time)) ==
-                            std::cv_status::timeout) {
-                            if (_current_workers > low_watermark) {
+                        auto now = std::chrono::system_clock::now();
+                        while (tasks.empty()) {
+                            if (empty_condition.wait_until(lock, now + std::chrono::milliseconds(idle_time)) ==
+                                std::cv_status::timeout) {
+                                if (_current_workers > low_watermark) {
+                                    --_current_workers;
+                                    //_logger->debug("Thread with id {} has been killed", std::this_thread::get_id());
+                                    return;
+                                }
+                            }
+                            if (tasks.empty() && state == State::kStopping) {
                                 --_current_workers;
+                                if (!_current_workers) {
+                                    state = State::kStopped;
+                                    had_finished.notify_all();
+                                }
                                 //_logger->debug("Thread with id {} has been killed", std::this_thread::get_id());
                                 return;
                             }
-                        }
-                        if (tasks.empty() && state == State::kStopping) {
-                            --_current_workers;
-                            if (!_current_workers) {
-                                state = State::kStopped;
-                                had_finished.notify_all();
-                            }
-                            //_logger->debug("Thread with id {} has been killed", std::this_thread::get_id());
-                            return;
                         }
                     }
                     task = tasks.front();

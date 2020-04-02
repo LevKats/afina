@@ -32,7 +32,18 @@ public:
     };
     Executor(uint32_t low_watermark, uint32_t hight_watermark, uint32_t max_queue_size, uint32_t idle_time)
         : low_watermark(low_watermark), hight_watermark(hight_watermark), max_queue_size(max_queue_size),
-          idle_time(idle_time) {}
+          idle_time(idle_time) {
+        state = State::kRun;
+        _current_workers = 0;
+        //_logger->debug("Threadpool watermarks is {} {}", low_watermark, hight_watermark);
+        for (uint32_t i = 0; i != low_watermark; ++i) {
+            std::unique_lock<std::mutex> lock(_queue_modify);
+            std::thread th(&Executor::perform, this);
+            //_logger->debug("Creating thread {}/{}, id {}", i + 1, low_watermark, th.get_id());
+            th.detach();
+            ++_current_workers;
+        }
+    }
 
     ~Executor() {
         assert(low_watermark < hight_watermark && low_watermark > 0);
@@ -58,28 +69,6 @@ public:
             while (state != State::kStopped) {
                 had_finished.wait(lock);
             }
-        }
-    }
-
-    /**
-     * Signal thread pool to start. It will start low_watermark of new threads and change state to kRun
-     */
-    void Start() {
-        {
-            std::unique_lock<std::mutex> lock(_queue_modify);
-            if (state == State::kRun) {
-                return;
-            }
-            state = State::kRun;
-            _current_workers = 0;
-        }
-        //_logger->debug("Threadpool watermarks is {} {}", low_watermark, hight_watermark);
-        for (uint32_t i = 0; i != low_watermark; ++i) {
-            std::unique_lock<std::mutex> lock(_queue_modify);
-            std::thread th(&Executor::perform, this);
-            //_logger->debug("Creating thread {}/{}, id {}", i + 1, low_watermark, th.get_id());
-            th.detach();
-            ++_current_workers;
         }
     }
 

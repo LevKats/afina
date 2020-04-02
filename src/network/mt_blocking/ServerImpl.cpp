@@ -78,7 +78,6 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     auto new_ex = std::unique_ptr<Concurrency::Executor>(
         new Concurrency::Executor(std::max(n_workers / 2, uint32_t(1)), n_workers, 100, 10000));
     executor = std::move(new_ex);
-    executor->Start();
 
     _thread = std::thread(&ServerImpl::OnRun, this);
 }

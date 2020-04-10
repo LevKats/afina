@@ -2,8 +2,11 @@
 #define AFINA_NETWORK_MT_BLOCKING_SERVER_H
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
+#include <afina/concurrency/Executor.h>
 #include <afina/network/Server.h>
 
 namespace spdlog {
@@ -39,6 +42,9 @@ protected:
     void OnRun();
 
 private:
+    // Worker's logic
+    void Worker(int client_socket);
+
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
 
@@ -46,6 +52,9 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
+
+    // Just thread pool
+    std::unique_ptr<Concurrency::Executor> executor;
 
     // Server socket to accept connections on
     int _server_socket;

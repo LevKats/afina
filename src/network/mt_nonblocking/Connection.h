@@ -8,15 +8,20 @@
 #include <sys/epoll.h>
 #include <vector>
 
+#include <afina/logging/Service.h>
+#include <spdlog/logger.h>
+
 namespace Afina {
 namespace Network {
 namespace MTnonblock {
 
 class Connection {
 public:
-    Connection(int s, std::shared_ptr<Afina::Storage> ps) : _socket(s), ps(ps), is_alive(false), is_ready(false) {
+    Connection(int s, std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Afina::Logging::Service> pl)
+        : _socket(s), ps(ps), is_alive(false), is_ready(false) {
         std::memset(&_event, 0, sizeof(struct epoll_event));
         _event.data.ptr = this;
+        logger = pl->select("network.connection");
     }
 
     inline bool isAlive() const { return is_alive.load(std::memory_order_acquire); }
@@ -48,6 +53,9 @@ private:
     std::size_t arg_remains;
     std::string argument_for_command;
     std::shared_ptr<Afina::Storage> ps;
+
+    // logger
+    std::shared_ptr<spdlog::logger> logger;
 
     std::vector<std::string> results;
 };
